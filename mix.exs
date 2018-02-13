@@ -53,7 +53,7 @@ defmodule Bamboo.SparkPostAdapter.Mixfile do
   # Type "mix help deps" for more examples and options
   defp deps do
     [
-      {:bamboo, "~> 0.8.0"},
+      {:bamboo, github: "bartoszgorka/bamboo", branch: "patch-1"},
       {:ex_doc, "~> 0.9", only: :dev},
       {:earmark, ">= 0.0.0", only: :dev},
       {:cowboy, "~> 1.0", only: [:test, :dev]},
