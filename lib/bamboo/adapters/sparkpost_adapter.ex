@@ -22,37 +22,20 @@ defmodule Bamboo.SparkPostAdapter do
   @default_base_uri "https://api.sparkpost.com"
   @send_message_path "/api/v1/transmissions"
   @behaviour Bamboo.Adapter
+  @service_name "SparkPost"
 
-  defmodule ApiError do
-    defexception [:message]
-
-    def exception(%{params: params, response: response}) do
-      filtered_params = params |> Poison.decode! |> Map.put("key", "[FILTERED]")
-
-      message = """
-      There was a problem sending the email through the SparkPost API.
-
-      Here is the response:
-
-      #{inspect response, limit: :infinity}
-
-
-      Here are the params we sent:
-
-      #{inspect filtered_params, limit: :infinity}
-      """
-      %ApiError{message: message}
-    end
-  end
+  import Bamboo.ApiError
 
   def deliver(email, config) do
     api_key = get_key(config)
+    hackney_options = Map.get(config, :hackney_options, [])
     params = email |> convert_to_sparkpost_params |> Poison.encode!
-    case request!(@send_message_path, params, api_key) do
+    case request!(@send_message_path, params, api_key, hackney_options) do
       {:ok, status, _headers, response} when status > 299 ->
-        raise(ApiError, %{params: params, response: response})
+        filtered_params = params |> Plug.Conn.Query.decode() |> Map.put("key", "[FILTERED]")
+        raise_api_error(@service_name, response, filtered_params)
       {:error, reason} ->
-        raise(ApiError, %{message: inspect(reason)})
+        raise_api_error(inspect(reason))
       response -> response
     end
   end
@@ -65,6 +48,9 @@ defmodule Bamboo.SparkPostAdapter do
       config
     end
   end
+
+  @doc false
+  def supports_attachments?, do: true
 
   defp get_key(config) do
     case Map.get(config, :api_key) do
@@ -95,6 +81,7 @@ defmodule Bamboo.SparkPostAdapter do
         html: email.html_body,
         reply_to: extract_reply_to(email),
         headers: drop_reply_to(email_headers(email)),
+        attachments: attachments(email)
       },
       recipients: recipients(email),
     }
@@ -164,9 +151,21 @@ defmodule Bamboo.SparkPostAdapter do
     [{"content-type", "application/json"}, {"authorization", api_key}]
   end
 
-  defp request!(path, params, api_key) do
+  defp attachments(%{attachments: attachments}) do
+    attachments
+    |> Enum.reverse
+    |> Enum.map(fn(att) ->
+      %{
+        name: att.filename,
+        type: att.content_type,
+        data: Base.encode64(att.data)
+      }
+    end)
+  end
+
+  defp request!(path, params, api_key, hackney_options) do
     uri = base_uri() <> path
-    :hackney.post(uri, headers(api_key), params, [:with_body])
+    :hackney.post(uri, headers(api_key), params, [:with_body] ++ hackney_options)
   end
 
   defp base_uri do
